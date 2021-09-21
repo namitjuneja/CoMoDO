@@ -3,66 +3,105 @@
 import numpy as np
 from pathlib import Path
 from skimage import io
-from skimage.color import rgb2gray
+from skimage.color import rgb2gray, rgba2rgb
 from matplotlib import pyplot as plt
 from skimage import measure
 from skimage.future import graph
-
+import networkx as nx
 import sys
+import scipy.misc
+import imageio
+from scipy.spatial import distance as dist
 
 
-def compute_distance(x, y, image_set_directory, query_image_filename):
+
+def compute_distance(image_set_directory, 
+                     signature_function='surface_volume_ratio_sig', 
+                     visualize_graphs=False,
+                     weighted=False,
+                     cosine=False):
     image_vectors = []
+    components = []
+    rags = []
+    rags_dict = {}
 
-    x = int(x)
-    y = int(y)
 
     # generate images from plt files
-    source_directory = Path(image_set_directory)
-    for idx, image in enumerate(source_directory.iterdir()):
-        # read the image file and process it
-        img_data = np.genfromtxt(image, skip_header=3, skip_footer=(x * y))
-        img = img_data[:, 2].reshape(x + 1, y + 1)
-        plt.imsave(f'{idx}.jpg', img, cmap='gray')
+    # source_directory = Path(image_set_directory)
+    # for idx, image in enumerate(source_directory.iterdir()):
+    #     # read the image file and process it
+    #     img_data = np.genfromtxt(image, skip_header=3, skip_footer=(x * y))
+    #     img = img_data[:, 2].reshape(x + 1, y + 1)
+    #     plt.imsave(f'{idx}.jpg', img, cmap='gray')
 
-    for i in range(idx):
-        img = io.imread(f'{i}.jpg')
-        # convert the image to grayscale and threshold it
-        img = rgb2gray(img)
-        # generate region adjacency graph
-        rag = generate_region_adjacency_graph(img, 'surface_volume_ratio_sig')
-        # generate bfs vector
-        vector = generate_bfs_vector(rag)
-        image_vectors.append(vector)
+    # `image_set_directory` can either be a string containing path to the files or
+    # a list of strings containing path to multiple files
+    if isinstance(image_set_directory, str):
+        sorted_img_files = sorted([i for i in Path(image_set_directory).iterdir()])
+    elif isinstance(image_set_directory, list):
+        sorted_img_files = []
+        for directory in image_set_directory:
+            sorted_directory_files = sorted([i for i in Path(directory).iterdir()])
+            sorted_img_files += sorted_directory_files
 
-    # generate vector for the query image
-    img_data = np.genfromtxt(query_image_filename, skip_header=3, skip_footer=(x * y))
-    img = img_data[:, 2].reshape(x + 1, y +1)
-    print(img.shape)
 
-    plt.imsave('query.jpg', img, cmap='gray')
-    img = io.imread('query.jpg')
+    for p in sorted_img_files:
+        if p.is_file():
+            print(p)
 
-    # convert the image to grayscale and threshold it
-    img = rgb2gray(img)
+            # read image data and convert the image to grayscale
+            img = io.imread(p)
+            img = rgb2gray(rgba2rgb(img))
 
-    # generate region adjacency graph
-    rag = generate_region_adjacency_graph(img, 'surface_volume_ratio_sig')
+            # read raw bitwise data 
+            # img_data = np.genfromtxt(p)
+            # img = img_data.reshape((100, 400))
+
+
+            # generate region adjacency graph
+            rag, component = generate_region_adjacency_graph(img, signature_function)
+            rags.append(rag)
+            rags_dict[p.stem] = rag
+            components.append(component)
+
+            # visualize graphs if required
+            if visualize_graphs:
+                generate_graph_visualization_images([rag], p.stem)
+            # generate bfs vector
+            vector = generate_bfs_vector(rag)
+            image_vectors.append(vector)
 
     # generate bfs vector
-    query_vector = generate_bfs_vector(rag)
     distances = []
-    for vector in image_vectors:
-        # make the 2 vectors of equal length
-        vector_pair = [query_vector, vector]
-        padded_vectors = generate_padded_vectors(vector_pair)
-        # compute the euclidean distance of the 2 vectors
-        distance = np.linalg.norm(padded_vectors[0] - padded_vectors[1], 1)
+    for vector_1 in image_vectors:
+        distance_row = []
+        for vector_2 in image_vectors:
+            # make the 2 vectors of equal length
+            vector_pair = [vector_1, vector_2]
+            padded_vectors = generate_padded_vectors_reversable(vector_pair)
+            if cosine:
+                v1, v2 = padded_vectors
+                abs_padded_vectors = [[np.abs(i) for i in v1], [np.abs(j) for j in v2]]
+                distance = dist.cosine(*abs_padded_vectors)
+            else:
+                # compute the euclidean distance of the 2 vectors
+                if weighted:
+                    distance = weightedL2(padded_vectors[0], padded_vectors[1])
+                else:
+                    distance = np.linalg.norm(padded_vectors[0] - padded_vectors[1])
 
-        distances.append(distance)
+            distance_row.append(distance)
+        distances.append(distance_row)
 
-    return min(distances)
+    return distances
 
+def weightedL2(vector_1, vector_2):
+    diff = vector_1 - vector_2
+    weight_array = [damping_function(i) for i in np.arange(len(diff))]
+    return np.sqrt((weight_array*diff*diff).sum())
+
+def damping_function(x):
+    return 10*np.exp(-0.05*x)
 
 def generate_region_adjacency_graph(image, signature_function):
     """
@@ -98,20 +137,127 @@ def generate_region_adjacency_graph(image, signature_function):
     # Ensure no sig value is getting pruned
     assert len(components) == len(sigs), "Total signatures != Total components"
 
+    # delete components whose signature is None
+    # those components need to be pruned
+    for idx, sig in enumerate(sigs):
+        if not sig:
+            rag.remove_node(idx + 1)
+
+    # create a pruned component list that only 
+    # has components with valid signatures
+    pruned_components = []
+    for idx, sig in enumerate(sigs):
+        if sig:
+            pruned_components.append(components[idx])
+
     # add signatures as node weights
     for idx, sig in enumerate(sigs):
-        rag.nodes[idx + 1]['weight'] = sig
+        # only add signature when signature is not None
+        # None signature means the component needs to 
+        # be ignored
+        if sig:
+            rag.nodes[idx + 1]['weight'] = sig
 
-        # remove unwanted data in the nodes
-        del rag.nodes[idx + 1]['total color']
+            # remove unwanted data in the nodes
+            del rag.nodes[idx + 1]['total color']
 
     # remove edge weights since they are not required
     for edge in rag.edges:
         node_1, node_2 = edge
         del rag[node_1][node_2]['weight']
 
-    return rag
+    # inform user about the components that were neglected
+    total_components_pruned = len(components) - len(pruned_components)
+    print(f"Pruned {total_components_pruned} component(s)")
 
+    return rag, pruned_components
+
+def generate_graph_visualization_images(graphs, filename, combined=True):
+  """
+  Save graph visualizations as images.
+
+  Args:
+      graphs: list of graphs to be visualized
+      combined: if False, directory name will
+                be determined based on index number 
+                of the graph. Default=True.
+  """
+  # trajectory_name, trajectory_index = trajectory_name.split("_")
+  # target_dir = Path("/home/namit/codes/Entropy-Isomap/outputs/constDt-5replicas-noPer-4x4_graphs")/trajectory_name/(f"{trajectory_index}.png")
+  # if target_dir.exists():
+    # return None
+
+  root_nodes = []
+  for graph_num,gg in enumerate(graphs):
+      
+      fig,axes = plt.subplots()
+
+      # import ipdb; ipdb.set_trace()
+      
+      # setting node size
+      node_size = [i[1]['pixel count'] for i in gg.nodes(data=True)]
+      sum_node_size = sum(node_size)
+      node_size_normalized = [(i/sum_node_size)*5000 for i in node_size]
+      
+      # setting node color
+      node_color = []
+      for i in gg.nodes(data=True):
+          current_color = i[1]['mean color'][0]
+          if current_color == 1:
+              # this is white
+              # set to light grey
+              node_color.append(np.array([0.7,0.7,0.7]))
+          elif current_color == 0:
+              # this is black
+              # set to dark grey
+              node_color.append(np.array([0.3,0.3,0.3]))
+          else:
+              # this should never happen
+              print("Unknown color of node.")
+      
+      # setting node label
+      node_labels = {}
+      for index, size in enumerate(node_size):
+          node_labels[index+1] = f"{size}"
+          # node_labels[index+1] = f"{size} ({index+1})"
+          
+      # setting node edge colors
+      edgecolors = ['k']*len(node_color)
+      root_node = get_max_degree_node(gg)
+      # print(f"{graph_num} - {root_node}")
+      try:
+          edgecolors[root_node-1] = 'r'
+      except:
+          nx.draw_kamada_kawai(graph)
+          return None
+      root_nodes.append(root_node)
+      
+      
+      # create the graph and save it
+      nx.draw_kamada_kawai(gg, 
+                            node_color  = node_color,
+                            edgecolors  = edgecolors,
+                            labels      = node_labels,
+                            with_labels = True,
+                            ax          = axes)
+      
+      # target_dir = Path("/home/namit/codes/Entropy-Isomap/outputs/constDt-5replicas-noPer-4x4_graphs")/trajectory_name
+      target_dir = Path("./")/"graphs"
+  
+      # create if path does not exist
+      target_dir.mkdir(parents=True, exist_ok=True)
+      
+      # title = trajectory_name+f" #{graph_num%80} ({graph_num})"
+      # plt.title(title, y=-0.1)
+      
+      plt.savefig(target_dir/(f"{filename}.png"))
+      # plt.savefig(f'/home/namit/codes/meads/morphology-similarity/playground/Results/organic_morphology_graph_{m_idx}.pdf')
+
+      print("generated graph file: ", target_dir/(f"{filename}.png"))
+      
+      plt.cla()
+      plt.close()
+  return root_nodes
 
 def generate_bfs_vector(graph, return_traversal_order=False):
     """
@@ -136,7 +282,6 @@ def generate_bfs_vector(graph, return_traversal_order=False):
 
     # generate BFS vector
     return priority_bfs(graph, root, return_traversal_order=return_traversal_order)
-
 
 def generate_padded_vectors(vectors):
     """
@@ -313,7 +458,43 @@ def surface_volume_ratio_sig(component):
     perimeter = measure.perimeter(component)
     area = np.sum(component == 1)
     # Note: We are guranteed to have at least 1 pixel of value 1
+    # the perimeter of a single pixel is also 1
+    if perimeter == 0:
+        return None
     return perimeter/area
+
+def shape_ratio_sig(component):
+    """The ratio of the width of the component to it's height"""
+    # The component is the only part of the full image that is 1
+    # we need to generate a bounding box around the component 
+    # measure the ratio of its height and width
+
+    # convert component array into integer array
+    component = component.astype(np.int64)
+
+    # generate region properties of the component
+    regions = measure.regionprops(component)
+
+    # the component image will have only one component
+    min_row, \
+    min_col, \
+    max_row, \
+    max_col = regions[0]['BoundingBox']
+    
+    lengthXdirection= (max_row-min_row)
+    lengthYdirection= (max_col-min_col)
+    minlength=min(lengthXdirection,lengthYdirection)
+    maxlength=max(lengthXdirection,lengthYdirection)
+    return(minlength/maxlength)
+
+def fractal_dimension_sig(component):
+    """The fractal dimension of the component"""
+    if np.isnan(fractal_dimension(component)):
+        return None
+    area = np.sum(component == 1)
+    if area < 100:
+        return None
+    return fractal_dimension(component)
 
 def get_max_degree_node(graph):
     """
@@ -495,7 +676,7 @@ def generate_padded_vectors_reversable(vectors):
     #     split_vectors.append(split_vector)
 
 
-    print([print(i) for i in split_vectors])
+    # print([print(i) for i in split_vectors])
 
 
 
@@ -561,6 +742,45 @@ def front_pad(vector, max_dimension):
     if not isinstance(vector, np.ndarray): vector=np.array(vector)
 
     return np.pad(vector, (0,max_dimension-len(vector)))
+
+def fractal_dimension(Z, threshold=0.9):
+
+    # Only for 2d image
+    assert(len(Z.shape) == 2)
+
+    # From https://github.com/rougier/numpy-100 (#87)
+    def boxcount(Z, k):
+        S = np.add.reduceat(
+            np.add.reduceat(Z, np.arange(0, Z.shape[0], k), axis=0),
+                               np.arange(0, Z.shape[1], k), axis=1)
+
+        # We count non-empty (0) and non-full boxes (k*k)
+        return len(np.where((S > 0) & (S < k*k))[0])
+
+
+    # Transform Z into a binary array
+    Z = (Z < threshold)
+
+    # Minimal dimension of image
+    p = min(Z.shape)
+
+    # Greatest power of 2 less than or equal to p
+    n = 2**np.floor(np.log(p)/np.log(2))
+
+    # Extract the exponent
+    n = int(np.log(n)/np.log(2))
+
+    # Build successive box sizes (from 2**n down to 2**1)
+    sizes = 2**np.arange(n, 1, -1)
+
+    # Actual box counting with decreasing size
+    counts = []
+    for size in sizes:
+        counts.append(boxcount(Z, size))
+
+    # Fit the successive log(sizes) with log (counts)
+    coeffs = np.polyfit(np.log(sizes), np.log(counts), 1)
+    return -coeffs[0]
 
 # if len(sys.argv) != 5:
 #     print("usage: compute_distance.py <x> <y> <path_to_morphology_set_directory> <path_to_query_image>")
