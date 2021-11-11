@@ -5,6 +5,7 @@ from pathlib import Path
 from skimage import io
 from skimage.color import rgb2gray, rgba2rgb
 from matplotlib import pyplot as plt
+from matplotlib.patches import Patch
 from skimage import measure
 from skimage.future import graph
 import networkx as nx
@@ -19,7 +20,8 @@ def compute_distance(image_set_directory,
                      signature_function='surface_volume_ratio_sig', 
                      visualize_graphs=False,
                      weighted=False,
-                     cosine=False):
+                     cosine=False, 
+                     visualize_padded_vector=False):
     image_vectors = []
     components = []
     rags = []
@@ -64,11 +66,11 @@ def compute_distance(image_set_directory,
 
 
             # generate region adjacency graph
-            # rag = generate_region_adjacency_graph(img, signature_function)
+            rag = generate_region_adjacency_graph(img, signature_function)
             # rags.append(rag)
             # rags_dict[p.stem] = rag
-            rag, component = generate_region_adjacency_graph(img, signature_function)
-            components.append(component)
+            # rag, component = generate_region_adjacency_graph(img, signature_function)
+            # components.append(component)
 
             # visualize graphs if required
             if visualize_graphs:
@@ -76,6 +78,13 @@ def compute_distance(image_set_directory,
             # generate bfs vector
             vector = generate_bfs_vector(rag)
             image_vectors.append(vector)
+
+    # visualize padded vectors
+    if visualize_padded_vector:
+        if len(image_vectors) != 2:
+            print("Error: No. of morphologies != 2. Padded vector visualization aborted")
+        else:
+            generate_padded_vector_visualization(generate_padded_vectors_reversable(image_vectors))
 
     # generate bfs vector
     distances = []
@@ -269,6 +278,48 @@ def generate_graph_visualization_images(graphs, filename, combined=True):
       plt.cla()
       plt.close()
   return root_nodes
+
+def generate_padded_vector_visualization(padded_vectors):
+  import ipdb; ipdb.set_trace();
+  fig, ax = plt.subplots(figsize=(12,2))
+  ticks = np.arange(0, len(padded_vectors[0]), 20)
+  minor_ticks = np.arange(0, len(padded_vectors[0]), 5)
+  ax.set_xticks(ticks)
+  ax.set_xticks(ticks, minor=True)
+  ax.set_yticklabels(['',f'10x80 morph #7', f'10x80 morph #3'])
+  plt.grid(True, axis='x', linestyle='-',zorder=0)
+
+  plt.setp(ax.get_xminorticklabels(), visible=False)
+
+  plt.xlabel("Vector Dimension")
+  plt.title("Comparing vectors post padding")
+
+  legend = [Patch(facecolor=[8/255,46/255,20/255],     edgecolor='k',label='Black Node'),
+            Patch(facecolor=[232/255,236/255,236/255], edgecolor='k',label='White Node'),
+            Patch(facecolor=[255/255,90/255,95/255],   edgecolor='k',label='Padding')]
+  plt.legend(handles=legend, bbox_to_anchor=(1,0), loc="lower right", bbox_transform=fig.transFigure, ncol=3)
+
+  plt.tight_layout()
+
+  for i in range(len(padded_vectors[0])):
+      if padded_vectors[0][i]==0:
+          c1 = [255/255,90/255,95/255]
+      elif padded_vectors[0][i]>0:
+          c1 = [232/255,236/255,236/255]
+      else:
+          c1 = [8/255,46/255,20/255]
+          
+      if padded_vectors[1][i]==0:
+          c2 = [255/255,90/255,95/255]
+      elif padded_vectors[1][i]>0:
+          c2 = [232/255,236/255,236/255]
+      else:
+          c2 = [8/255,46/255,20/255]
+          
+      color=[c1,c2]
+      plt.barh([0,1], [1,1], left=i, color=color, height=0.75, orientation='horizontal',zorder=3)
+      a = plt.xticks(np.arange(0, len(padded_vectors[0])+1, 5.0))
+  plt.savefig("vector_visualization.jpg")
 
 def generate_bfs_vector(graph, return_traversal_order=False):
     """
