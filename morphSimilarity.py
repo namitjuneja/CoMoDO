@@ -364,8 +364,8 @@ def generate_padded_vectors(vectors):
     # positive irrespective of color
     # positive_vectors = []
     # for padded_vector in padded_vectors:
-    # 	positive_vector = np.abs(padded_vector)
-    # 	positive_vectors.append(positive_vector)
+    #   positive_vector = np.abs(padded_vector)
+    #   positive_vectors.append(positive_vector)
 
     # write some tests maybe
     return padded_vectors
