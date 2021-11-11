@@ -41,7 +41,7 @@ def compute_distance(image_set_directory,
     elif isinstance(image_set_directory, list):
         sorted_img_files = []
         for directory in image_set_directory:
-            sorted_directory_files = sorted([i for i in Path(directory).iterdir()])
+            sorted_directory_files = sorted([i for i in Path(directory).iterdir()], key=lambda x: int(str(x).split("/")[-1].split(".")[-2]))
             sorted_img_files += sorted_directory_files
 
 
@@ -51,17 +51,23 @@ def compute_distance(image_set_directory,
 
             # read image data and convert the image to grayscale
             img = io.imread(p)
-            img = rgb2gray(rgba2rgb(img))
+            # if the image has an alpha (tansparency) chanel remove it
+            if img.shape[-1] == 4:
+                img = rgba2rgb(img)
+            img = rgb2gray(img)
 
             # read raw bitwise data 
             # img_data = np.genfromtxt(p)
-            # img = img_data.reshape((100, 400))
+            # img = img_data.reshape((100, 200))
+            # img = np.where(img > 0.5, 1, 0)
+            # plt.imsave(f"./images/{p.stem}.png", img, cmap='gray')
 
 
             # generate region adjacency graph
+            # rag = generate_region_adjacency_graph(img, signature_function)
+            # rags.append(rag)
+            # rags_dict[p.stem] = rag
             rag, component = generate_region_adjacency_graph(img, signature_function)
-            rags.append(rag)
-            rags_dict[p.stem] = rag
             components.append(component)
 
             # visualize graphs if required
@@ -82,18 +88,22 @@ def compute_distance(image_set_directory,
             if cosine:
                 v1, v2 = padded_vectors
                 abs_padded_vectors = [[np.abs(i) for i in v1], [np.abs(j) for j in v2]]
-                distance = dist.cosine(*abs_padded_vectors)
+                distance = dist.cosine(*padded_vectors)
             else:
                 # compute the euclidean distance of the 2 vectors
                 if weighted:
                     distance = weightedL2(padded_vectors[0], padded_vectors[1])
                 else:
                     distance = np.linalg.norm(padded_vectors[0] - padded_vectors[1])
+                    # compute d squared for coparison
+                    # distance = np.power(distance, 2)
 
             distance_row.append(distance)
         distances.append(distance_row)
 
     return distances
+    # return generate_padded_vectors_reversable(image_vectors)
+    # return components
 
 def weightedL2(vector_1, vector_2):
     diff = vector_1 - vector_2
@@ -168,9 +178,11 @@ def generate_region_adjacency_graph(image, signature_function):
 
     # inform user about the components that were neglected
     total_components_pruned = len(components) - len(pruned_components)
-    print(f"Pruned {total_components_pruned} component(s)")
+    print(f"Pruned {total_components_pruned}/{len(components)} component(s)")
 
-    return rag, pruned_components
+    # return rag, pruned_components
+    # return rag, components
+    return rag
 
 def generate_graph_visualization_images(graphs, filename, combined=True):
   """
@@ -225,19 +237,18 @@ def generate_graph_visualization_images(graphs, filename, combined=True):
       edgecolors = ['k']*len(node_color)
       root_node = get_max_degree_node(gg)
       # print(f"{graph_num} - {root_node}")
-      try:
-          edgecolors[root_node-1] = 'r'
-      except:
-          nx.draw_kamada_kawai(graph)
-          return None
+      # try:
+      #     edgecolors[root_node-1] = 'r'
+      # except:
+      #     nx.draw_kamada_kawai(graph)
+      #     return None
       root_nodes.append(root_node)
       
-      
+
       # create the graph and save it
       nx.draw_kamada_kawai(gg, 
                             node_color  = node_color,
                             edgecolors  = edgecolors,
-                            labels      = node_labels,
                             with_labels = True,
                             ax          = axes)
       
@@ -698,7 +709,7 @@ def generate_padded_vectors_reversable(vectors):
         padded_split_vector = []
         for index,split in enumerate(split_vector):
 
-            padded_split = front_pad(split, max_split_length[index])
+            padded_split = front_pad(split, max_split_length[index], 0)
             padded_split_vector.append(padded_split)
 
         padded_split_vectors.append(padded_split_vector)
@@ -719,7 +730,7 @@ def generate_padded_vectors_reversable(vectors):
     padded_vectors = []
     for merged_vector in merged_vectors:
 
-        padded_vector = front_pad(merged_vector, max_dimension)
+        padded_vector = front_pad(merged_vector, max_dimension, 0)
         padded_vectors.append(padded_vector)
 
 
@@ -734,16 +745,19 @@ def generate_padded_vectors_reversable(vectors):
     # write some tests maybe
     return padded_vectors
 
-def front_pad(vector, max_dimension):
+def front_pad(vector, max_dimension, pad_value=0):
     """
     Add zeroes in front of the given vector
     """
     # make np array if not
     if not isinstance(vector, np.ndarray): vector=np.array(vector)
 
-    return np.pad(vector, (0,max_dimension-len(vector)))
+    return np.pad(vector, 
+                  (0,max_dimension-len(vector)),
+                  mode='constant', 
+                  constant_values=(0,pad_value))
 
-def fractal_dimension(Z, threshold=0.9):
+def fractal_dimension(Z, threshold=0.5):
 
     # Only for 2d image
     assert(len(Z.shape) == 2)
