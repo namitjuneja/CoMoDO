@@ -280,7 +280,6 @@ def generate_graph_visualization_images(graphs, filename, combined=True):
   return root_nodes
 
 def generate_padded_vector_visualization(padded_vectors):
-  import ipdb; ipdb.set_trace();
   fig, ax = plt.subplots(figsize=(12,2))
   ticks = np.arange(0, len(padded_vectors[0]), 20)
   minor_ticks = np.arange(0, len(padded_vectors[0]), 5)
