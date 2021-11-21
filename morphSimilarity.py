@@ -21,7 +21,8 @@ def compute_distance(image_set_directory,
                      visualize_graphs=False,
                      weighted=False,
                      cosine=False, 
-                     visualize_padded_vector=False):
+                     visualize_padded_vector=False,
+                     max_degree_node_color=1):
     image_vectors = []
     components = []
     rags = []
@@ -74,9 +75,9 @@ def compute_distance(image_set_directory,
 
             # visualize graphs if required
             if visualize_graphs:
-                generate_graph_visualization_images([rag], p.stem)
+                generate_graph_visualization_images([rag], p.stem, max_degree_node_color)
             # generate bfs vector
-            vector = generate_bfs_vector(rag)
+            vector = generate_bfs_vector(rag, max_degree_node_color)
             image_vectors.append(vector)
 
     # visualize padded vectors
@@ -193,7 +194,7 @@ def generate_region_adjacency_graph(image, signature_function):
     # return rag, components
     return rag
 
-def generate_graph_visualization_images(graphs, filename, combined=True):
+def generate_graph_visualization_images(graphs, filename, max_degree_node_color, combined=True):
   """
   Save graph visualizations as images.
 
@@ -244,7 +245,7 @@ def generate_graph_visualization_images(graphs, filename, combined=True):
           
       # setting node edge colors
       edgecolors = ['k']*len(node_color)
-      root_node = get_max_degree_node(gg)
+      root_node = get_max_degree_node(gg, max_degree_node_color)
       # print(f"{graph_num} - {root_node}")
       # try:
       #     edgecolors[root_node-1] = 'r'
@@ -320,7 +321,7 @@ def generate_padded_vector_visualization(padded_vectors):
       a = plt.xticks(np.arange(0, len(padded_vectors[0])+1, 5.0))
   plt.savefig("vector_visualization.jpg")
 
-def generate_bfs_vector(graph, return_traversal_order=False):
+def generate_bfs_vector(graph, max_degree_node_color, return_traversal_order=False):
     """
     Vecotorize a given graph using the priority BFS algorithm
 
@@ -339,7 +340,7 @@ def generate_bfs_vector(graph, return_traversal_order=False):
             were traversed. Only returned when return_traversal_order is True.
     """
     # determine the root node
-    root = get_max_degree_node(graph)
+    root = get_max_degree_node(graph, max_degree_node_color)
 
     # generate BFS vector
     return priority_bfs(graph, root, return_traversal_order=return_traversal_order)
@@ -557,7 +558,7 @@ def fractal_dimension_sig(component):
         return None
     return fractal_dimension(component)
 
-def get_max_degree_node(graph):
+def get_max_degree_node(graph, max_degree_node_color):
     """
     Determine the node with the maximum degree irrespective of its color
 
@@ -573,15 +574,36 @@ def get_max_degree_node(graph):
     max_degree_node = nodes[0][0]
 
     # Iterate over the nodes and find the most connected node
-    for node in nodes:
-        if graph.degree[node[0]] > graph.degree[max_degree_node]:
-            max_degree_node = node[0]
-        elif graph.degree[node[0]] == graph.degree[max_degree_node]:
-            # settle a tie by choosing the node with greater area
-            if node[1]['pixel count'] > \
-                graph.nodes(data=True)[max_degree_node]['pixel count']:
-                max_degree_node = node[0]
+    for current_node in nodes:
 
+        current_node_degree = graph.degree[current_node[0]]
+        max_degree_node_degree = graph.degree[max_degree_node]
+
+        if current_node_degree > max_degree_node_degree:
+            max_degree_node = current_node[0]
+
+        elif current_node_degree == max_degree_node_degree:
+            # settle a tie by choosing the node of a pre-determined color
+            # default is white
+
+            if max_degree_node_color == 0: #black
+                prefered_color = np.array([0,0,0])
+            else: #white
+                prefered_color = np.array([1,1,1])
+
+            current_max_degree_node_color = graph.nodes(data=True)[max_degree_node]['mean color']
+            current_node_color = current_node[1]['mean color']
+
+            if np.array_equal(current_node_color,current_max_degree_node_color):
+                # both the nodes are tied on connectivity and color
+                # we use signature value to break the tie
+                if current_node[1]['weight'] > graph.nodes(data=True)[max_degree_node]['weight']:
+                    max_degree_node = current_node[0]
+            elif np.array_equal(current_node_color, prefered_color):
+                max_degree_node = current_node[0]
+
+            # the above logic would only work when we have binary morphologies, because if the
+            # two nodes are not of the same color then atleast one has to match the prefered_color
     return max_degree_node
 
 def priority_bfs(graph, root, return_traversal_order=False):
