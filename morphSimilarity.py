@@ -746,6 +746,19 @@ def generate_padded_vectors_reversable(vectors):
         split_vector.append(sub_split_vector)
 
         split_vectors.append(split_vector)
+      
+    # verify that the first node of both the vectors is of the same color
+    # if not, add a padding of 0's equal in lenght with the number of 
+    # components of the same color in the same vector
+    # before
+    # [-1,-1,1, 1, 1,-1]
+    # [ 1, 1,1,-1,-1,-1]
+    # after
+    # [-1,-1,1,1,1,-1]
+    # [ 0, 0,1,1,1,-1,-1,-1]
+    if (split_vectors[0][0][0]*split_vectors[1][0][0] < 0): # implies root node is onot of the same color
+      initial_pad = [0]*len(split_vectors[0][0])
+      split_vectors[1].insert(0, initial_pad)
 
     # for vector in vectors:
     #     # split the nodes based on sign
@@ -815,7 +828,24 @@ def generate_padded_vectors_reversable(vectors):
     #   positive_vectors.append(positive_vector)
 
     # write some tests maybe
+    verify_padded_vectors(padded_vectors)
     return padded_vectors
+
+# test to ensure padding function works as intended
+def verify_padded_vectors(padded_vectors):
+  # assert length of both the vectors is the same
+  assert len(padded_vectors[0]) == len(padded_vectors[1]), \
+    "PADDING FAILED: padded vectors differ in length"
+
+  # assert component at each index of the both padded vecors
+  # is of the same phase
+  for ind in range(len(padded_vectors[0])):
+    assert padded_vectors[0][ind]*padded_vectors[1][ind] >= 0, \
+    f"PADDING FAILED: two component of different color found side by side.\n \
+      vector 1 component: {padded_vectors[0][ind]},\n \
+      vector 2 component: {padded_vectors[1][ind]},\n \
+      component index   : {ind}"
+
 
 def front_pad(vector, max_dimension, pad_value=0):
     """
