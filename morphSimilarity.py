@@ -756,9 +756,15 @@ def generate_padded_vectors_reversable(vectors):
     # after
     # [-1,-1,1,1,1,-1]
     # [ 0, 0,1,1,1,-1,-1,-1]
-    if (split_vectors[0][0][0]*split_vectors[1][0][0] < 0): # implies root node is onot of the same color
-      initial_pad = [0]*len(split_vectors[0][0])
-      split_vectors[1].insert(0, initial_pad)
+    if (split_vectors[0][0][0]*split_vectors[1][0][0] < 0): # implies root node is not of the same color
+      # always add padding to the vector that begins with black (negative)
+      # to keep the process deterministic otherwise the distance matrix becomes a symmetrical
+      if split_vectors[0][0][0] > 0:
+        initial_pad = [0]*len(split_vectors[0][0])
+        split_vectors[1].insert(0, initial_pad)
+      else:
+        initial_pad = [0]*len(split_vectors[1][0])
+        split_vectors[0].insert(0, initial_pad)
 
     # for vector in vectors:
     #     # split the nodes based on sign
